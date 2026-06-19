@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-porcelain text-ink font-sans antialiased;
+    font-feature-settings: 'ss01', 'cv01';
+    overflow-x: hidden;
+  }
+
+  /* Foco visible y accesible en toda la app */
+  :focus-visible {
+    outline: 2px solid theme('colors.ember');
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: theme('colors.ember');
+    color: theme('colors.porcelain');
+  }
+
+  h1, h2, h3 {
+    @apply font-display;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer components {
+  /* Etiqueta tipográfica: versalita espaciada, recurrente en la marca */
+  .eyebrow {
+    @apply font-sans text-[0.7rem] uppercase tracking-label text-ember font-semibold;
+  }
+
+  .eyebrow-muted {
+    @apply font-sans text-[0.7rem] uppercase tracking-label text-stone font-semibold;
+  }
+
+  /* Contenedor de ancho controlado */
+  .container-page {
+    @apply mx-auto w-full max-w-[1200px] px-5 sm:px-8;
+  }
+
+  /* Botón primario: la brasa. Reservado para "Ver en la Mesa". */
+  .btn-ember {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-ember px-5 py-3
+           font-sans text-sm font-semibold text-porcelain transition-all duration-300
+           hover:bg-emberDark active:scale-[0.98];
+  }
+
+  /* Botón fantasma: contornos finos, el resto de las acciones */
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-full border border-hairline
+           bg-transparent px-5 py-3 font-sans text-sm font-semibold text-ink transition-all
+           duration-300 hover:border-ink hover:bg-ink hover:text-porcelain active:scale-[0.98];
+  }
+
+  /* Píldora de metadato dentro de las tarjetas */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-hairline bg-cream/60
+           px-2.5 py-1 font-sans text-[0.7rem] font-medium text-stone;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Esqueleto de carga (shimmer) para imágenes lazy */
+  .skeleton {
+    @apply relative overflow-hidden bg-cream;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.55),
+      transparent
+    );
+  }
+}
+
+/* Respetar la preferencia de movimiento reducido */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#F8F7F4" />
+
+    <title>BRASA · Cocina de Fuego — Carta con Realidad Aumentada</title>
+    <meta
+      name="description"
+      content="La carta digital de BRASA. Explorá cada plato con fotos profesionales, ingredientes y maridajes, y velo en tu mesa en realidad aumentada desde tu teléfono."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://brasa.example/" />
+
+    <!-- Open Graph / redes -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="BRASA · Cocina de Fuego" />
+    <meta property="og:description" content="Carta premium con realidad aumentada: mirá cada plato sobre tu mesa." />
+    <meta property="og:locale" content="es_AR" />
+
+    <!-- Tipografías: Fraunces (display) + Hanken Grotesk (texto) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!--
+      model-viewer: usado SÓLO como fallback de AR en iOS (Safari no soporta WebXR).
+      En iPhone lanza AR Quick Look; en Android, Scene Viewer. Se carga diferido.
+    -->
+    <script
+      type="module"
+      src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"
+      defer
+    ></script>
+
+    <!-- Datos estructurados para SEO (Schema.org Restaurant) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Restaurant",
+        "name": "BRASA",
+        "servesCuisine": "Argentina contemporánea, cocina de fuego",
+        "priceRange": "$$$",
+        "address": {
+          "@type": "PostalAddress",
+          "addressLocality": "Pinamar",
+          "addressRegion": "Buenos Aires",
+          "addressCountry": "AR"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
