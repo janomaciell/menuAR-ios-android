@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useThree, useFrame } from '@react-three/fiber'
 import { OrbitControls, ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
@@ -6,8 +6,15 @@ import DishModel from './DishModel'
 import Reticle from './Reticle'
 
 // El modelo está autorado a ~1 unidad de radio de plato.
-// En AR lo escalamos a ~0.14 -> plato de ~26 cm sobre la mesa real.
+// En AR lo escalamos a ~0.14 → plato de ~26 cm sobre la mesa real.
 const AR_BASE_SCALE = 0.14
+
+// ---- Parámetros de estabilización del hit-test --------------------------------
+// Cuántos frames consecutivos debe estar el retículo cerca del mismo punto
+// antes de habilitar el tap. Evita que el usuario coloque el plato en el piso
+// por un hit-test inestable.
+const STABLE_FRAMES_REQUIRED = 18        // ~0.3s a 60fps, ~0.6s a 30fps
+const STABLE_DISTANCE_THRESHOLD = 0.04  // 4 cm de tolerancia entre frames
 
 export default function ARScene({
   model,
@@ -23,10 +30,16 @@ export default function ARScene({
   const dishInnerRef = useRef() // escala (gesto pinch)
   const placedRef = useRef(false)
   const [placed, setPlaced] = useState(false)
+  const [reticleStable, setReticleStable] = useState(false)
 
   const hitTestSourceRef = useRef(null)
   const hitTestRequestedRef = useRef(false)
   const lastStatusRef = useRef('')
+
+  // Estabilización: posición anterior del retículo y contador de frames estables
+  const lastReticlePos = useRef(new THREE.Vector3())
+  const stableFrameCount = useRef(0)
+  const stableRef = useRef(false)  // versión ref de reticleStable para useFrame sin closure
 
   const reportStatus = (s) => {
     if (lastStatusRef.current !== s) {
@@ -39,7 +52,11 @@ export default function ARScene({
   useEffect(() => {
     placedRef.current = false
     setPlaced(false)
+    stableFrameCount.current = 0
+    stableRef.current = false
+    setReticleStable(false)
     lastStatusRef.current = ''
+    lastReticlePos.current.set(0, 0, 0)
     if (controlsRef?.current) {
       controlsRef.current.rot = 0
       controlsRef.current.scaleK = 1
@@ -49,6 +66,7 @@ export default function ARScene({
   }, [resetSignal, arActive, controlsRef])
 
   // 'select' (tap en la pantalla durante la sesión) coloca / reubica el plato
+  // Solo funciona si el retículo ya está estabilizado
   useEffect(() => {
     if (!arActive) return
     const session = gl.xr.getSession?.()
@@ -57,7 +75,8 @@ export default function ARScene({
     const onSelect = () => {
       const reticle = reticleRef.current
       const dish = dishOuterRef.current
-      if (!reticle || !dish || !reticle.visible) return
+      // Requerir estabilización: si el retículo no está listo, ignorar el tap
+      if (!reticle || !dish || !reticle.visible || !stableRef.current) return
       dish.position.setFromMatrixPosition(reticle.matrix)
       placedRef.current = true
       setPlaced(true)
@@ -120,13 +139,46 @@ export default function ARScene({
     if (results.length > 0) {
       const pose = results[0].getPose(refSpace)
       if (pose) {
+        // ---- Filtro de estabilización ----------------------------------------
+        // Extraer la posición actual de la pose detectada
+        const mat = pose.transform.matrix
+        const currentPos = new THREE.Vector3(mat[12], mat[13], mat[14])
+
+        const dist = currentPos.distanceTo(lastReticlePos.current)
+        if (dist < STABLE_DISTANCE_THRESHOLD) {
+          stableFrameCount.current = Math.min(
+            stableFrameCount.current + 1,
+            STABLE_FRAMES_REQUIRED
+          )
+        } else {
+          // El retículo saltó: reiniciar contador
+          stableFrameCount.current = 0
+        }
+        lastReticlePos.current.copy(currentPos)
+
+        const isStable = stableFrameCount.current >= STABLE_FRAMES_REQUIRED
+        if (isStable !== stableRef.current) {
+          stableRef.current = isStable
+          setReticleStable(isStable) // actualizar React solo cuando cambia
+        }
+        // ---- Fin filtro -------------------------------------------------------
+
         reticle.visible = true
-        reticle.matrix.fromArray(pose.transform.matrix)
-        reportStatus('tapToPlace')
+        reticle.matrix.fromArray(mat)
+
+        // Reportar estado según estabilización
+        reportStatus(isStable ? 'tapToPlace' : 'stabilizing')
         return
       }
     }
+
+    // No se encontró superficie: reiniciar estabilización
     reticle.visible = false
+    stableFrameCount.current = 0
+    if (stableRef.current) {
+      stableRef.current = false
+      setReticleStable(false)
+    }
     reportStatus('searching')
   })
 
@@ -178,7 +230,7 @@ export default function ARScene({
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
-      <Reticle ref={reticleRef} />
+      <Reticle ref={reticleRef} stable={reticleStable} />
       <group ref={dishOuterRef} visible={placed} scale={AR_BASE_SCALE}>
         <group ref={dishInnerRef}>
           <DishModel model={model} accent={accent} />

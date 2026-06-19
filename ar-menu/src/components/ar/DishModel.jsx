@@ -60,20 +60,11 @@ function GlbModel({ path, accent }) {
   return <group ref={groupRef} />
 }
 
-// ---- Precargar los modelos más usados (mejora UX) ---------------------------
-const GLB_PRELOADS = [
-  '/modelos3D/burguer.glb',
-  '/modelos3D/BurgerKFC.glb',
-  '/modelos3D/PepperoniPizza.glb',
-  '/modelos3D/spaghetti.glb',
-  '/modelos3D/Sandwich.glb',
-  '/modelos3D/crispykitchen.glb',
-  '/modelos3D/polloentero.glb',
-  '/modelos3D/muffin.glb',
-  '/modelos3D/cookie.glb',
-  '/modelos3D/Croissant.glb',
-]
-GLB_PRELOADS.forEach((p) => useGLTF.preload(p))
+// ---- Preload selectivo: SOLO el modelo ultraligero (51 KB) ------------------
+// Los modelos grandes (8-36 MB) se cargan bajo demanda con Suspense para no
+// bloquear la RAM en dispositivos Android de gama media.
+// NO usar useGLTF.preload() para archivos > 1 MB en este contexto.
+useGLTF.preload('/modelos3D/burguer.glb')
 
 // =============================================================================
 //  Primitivas de respaldo (por si el GLB falla o se usa arquetipo legacy)

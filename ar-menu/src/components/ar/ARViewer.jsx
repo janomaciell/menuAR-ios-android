@@ -6,6 +6,47 @@ import { useARSupport } from '../../hooks/useARSupport'
 import { formatPrice } from '../../utils/format'
 import ARScene from './ARScene'
 
+// Spinner visible mientras se descarga/parsea el GLB (crítico en Android gama media)
+function ModelLoadingSpinner() {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '0.75rem',
+        pointerEvents: 'none',
+      }}
+    >
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 1.1, repeat: Infinity, ease: 'linear' }}
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: '50%',
+          border: '3px solid rgba(194,73,29,0.2)',
+          borderTopColor: '#C2491D',
+        }}
+      />
+      <span
+        style={{
+          fontFamily: 'sans-serif',
+          fontSize: '0.75rem',
+          fontWeight: 600,
+          color: 'rgba(26,23,20,0.55)',
+          letterSpacing: '0.05em',
+        }}
+      >
+        Cargando modelo 3D…
+      </span>
+    </div>
+  )
+}
+
 // Iconos inline (sin dependencias extra)
 const Icon = {
   close: (p) => (
@@ -218,9 +259,18 @@ export default function ARViewer({ dish, open, onClose }) {
       ? t('ar.placed')
       : status === 'tapToPlace'
         ? t('ar.tapToPlace')
-        : t('ar.searching')
+        : status === 'stabilizing'
+          ? t('ar.stabilizing') ?? 'Enfocando superficie…'
+          : t('ar.searching')
 
-  const statusSub = status === 'searching' ? t('ar.moveDevice') : null
+  const statusSub =
+    status === 'searching'
+      ? t('ar.moveDevice')
+      : status === 'stabilizing'
+        ? t('ar.stabilizingSub') ?? 'Apuntá a la MESA, no al piso'
+        : status === 'tapToPlace'
+          ? t('ar.tapToPlaceSub') ?? 'Tocá la mesa para colocar el plato'
+          : null
 
   return (
     <AnimatePresence>
@@ -240,15 +290,15 @@ export default function ARViewer({ dish, open, onClose }) {
         {/* Lienzo 3D persistente: hace de visor o de capa WebGL del AR */}
         <Canvas
           shadows
-          dpr={[1, 2]}
-          gl={{ alpha: true, antialias: true, preserveDrawingBuffer: true }}
+          dpr={[1, 1.5]}
+          gl={{ alpha: true, antialias: false, preserveDrawingBuffer: true, powerPreference: 'low-power' }}
           camera={{ position: [0, 1.2, 2.9], fov: 40 }}
           onCreated={({ gl }) => {
             glRef.current = gl
           }}
           style={{ position: 'absolute', inset: 0, background: arActive ? 'transparent' : undefined }}
         >
-          <Suspense fallback={null}>
+          <Suspense fallback={<ModelLoadingSpinner />}>
             <ARScene
               model={dish.model}
               accent={dish.accent}
@@ -302,12 +352,27 @@ export default function ARViewer({ dish, open, onClose }) {
           {/* Píldora de estado (solo en AR) */}
           {arActive && (
             <div className="absolute left-1/2 top-[22%] -translate-x-1/2 px-6 text-center">
-              <div className="inline-flex flex-col items-center gap-1 rounded-2xl bg-charcoal/55 px-5 py-3 backdrop-blur-md">
+              <motion.div
+                key={status}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.2 }}
+                className="inline-flex flex-col items-center gap-1 rounded-2xl px-5 py-3 backdrop-blur-md"
+                style={{
+                  background:
+                    status === 'tapToPlace'
+                      ? 'rgba(34,197,94,0.75)'   // verde: listo para tocar
+                      : status === 'stabilizing'
+                        ? 'rgba(249,115,22,0.7)'  // naranja: estabilizando
+                        : 'rgba(26,23,20,0.55)',   // oscuro: buscando / placed
+                }}
+              >
                 <span className="font-sans text-sm font-semibold text-porcelain">{statusText}</span>
-                {statusSub && <span className="font-sans text-[0.72rem] text-porcelain/70">{statusSub}</span>}
-              </div>
+                {statusSub && <span className="font-sans text-[0.72rem] text-porcelain/85">{statusSub}</span>}
+              </motion.div>
             </div>
           )}
+
 
           {/* Panel inferior */}
           <div className="absolute bottom-0 left-0 right-0 px-4 pb-[max(1.1rem,env(safe-area-inset-bottom))]">
