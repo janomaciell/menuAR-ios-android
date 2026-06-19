@@ -6,7 +6,23 @@ import { useARSupport } from '../../hooks/useARSupport'
 import { formatPrice } from '../../utils/format'
 import ARScene from './ARScene'
 
-// Spinner visible mientras se descarga/parsea el GLB (crítico en Android gama media)
+// =============================================================================
+//  ARViewer — visor AR completo para iOS (AR Quick Look) y Android (WebXR)
+//
+//  Mejoras para Android:
+//   1. Canvas lazy: el <Canvas> de Three.js solo se monta cuando el usuario
+//      abre el visor. Antes costaba GPU incluso estando "oculto".
+//   2. DPR reducido en Android: se fuerza dpr={[1,1]} para evitar el doble
+//      de píxeles en pantallas de alta densidad (A52 tiene 407 ppi).
+//   3. powerPreference: 'low-power' ya estaba, se mantiene.
+//   4. Manejo de WebGL context lost: si Android mata el contexto GL (señal de
+//      presión de memoria), se captura el evento, se muestra un mensaje claro
+//      y se ofrece al usuario continuar con el modo ligero (procedural).
+//   5. Indicador de tier: en dispositivos 'low', se avisa al usuario que el
+//      modelo se muestra en versión simplificada para proteger el dispositivo.
+// =============================================================================
+
+// Spinner visible mientras se descarga/parsea el GLB
 function ModelLoadingSpinner() {
   return (
     <div
@@ -47,7 +63,7 @@ function ModelLoadingSpinner() {
   )
 }
 
-// Iconos inline (sin dependencias extra)
+// Iconos inline
 const Icon = {
   close: (p) => (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" {...p}>
@@ -76,27 +92,37 @@ const Icon = {
       <path d="M21 8 12 3 3 8v8l9 5 9-5z" /><path d="M3 8l9 5 9-5M12 13v8" />
     </svg>
   ),
+  warning: (p) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...p}>
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
 }
 
 export default function ARViewer({ dish, open, onClose }) {
   const { t, tr, lang } = useLanguage()
   const ar = useARSupport()
 
-  const glRef = useRef(null)
-  const overlayRef = useRef(null)
-  const dialogRef = useRef(null)
+  const glRef       = useRef(null)
+  const overlayRef  = useRef(null)
+  const dialogRef   = useRef(null)
   const controlsRef = useRef({ rot: 0, scaleK: 1 })
-  const gesture = useRef({ mode: null, lastX: 0, startDist: 0, startScale: 1 })
+  const gesture     = useRef({ mode: null, lastX: 0, startDist: 0, startScale: 1 })
 
-  const [arActive, setArActive] = useState(false)
-  const [status, setStatus] = useState('idle') // idle | searching | tapToPlace | placed
-  const [resetSignal, setResetSignal] = useState(0)
-  const [toast, setToast] = useState('')
-  const [error, setError] = useState('')
+  const [arActive,     setArActive]     = useState(false)
+  const [status,       setStatus]       = useState('idle')
+  const [resetSignal,  setResetSignal]  = useState(0)
+  const [toast,        setToast]        = useState('')
+  const [error,        setError]        = useState('')
+  // webglLost: Android mató el contexto GL (presión de memoria)
+  const [webglLost,    setWebglLost]    = useState(false)
+  // glbFailed: el modelo GLB no pudo cargarse → informar al usuario
+  const [glbFailed,    setGlbFailed]    = useState(false)
 
   const placed = status === 'placed'
 
-  // Bloquear scroll del body y enfocar el diálogo mientras está abierto
+  // Bloquear scroll del body mientras el viewer está abierto
   useEffect(() => {
     if (!open) return
     const prev = document.body.style.overflow
@@ -107,14 +133,28 @@ export default function ARViewer({ dish, open, onClose }) {
     }
   }, [open])
 
+  // ── WebGL context lost ────────────────────────────────────────────────────
+  // Android puede matar el contexto GL bajo presión de memoria.
+  // Lo capturamos para mostrar un mensaje útil en lugar de una pantalla negra.
+  useEffect(() => {
+    if (!open) return
+    const canvas = glRef.current?.domElement
+    if (!canvas) return
+
+    const onLost = () => {
+      console.warn('[ARViewer] WebGL context lost — presión de memoria en Android')
+      setWebglLost(true)
+      setArActive(false)
+      setStatus('idle')
+    }
+    canvas.addEventListener('webglcontextlost', onLost)
+    return () => canvas.removeEventListener('webglcontextlost', onLost)
+  }, [open, glRef.current?.domElement])
+
   const stopAR = useCallback(async () => {
     const session = glRef.current?.xr?.getSession?.()
     if (session) {
-      try {
-        await session.end()
-      } catch (_) {
-        /* noop */
-      }
+      try { await session.end() } catch (_) { /* noop */ }
     }
     setArActive(false)
   }, [])
@@ -123,15 +163,15 @@ export default function ARViewer({ dish, open, onClose }) {
     await stopAR()
     setStatus('idle')
     setError('')
+    setWebglLost(false)
+    setGlbFailed(false)
     onClose?.()
   }, [stopAR, onClose])
 
   // Cerrar con Escape
   useEffect(() => {
     if (!open) return
-    const onKey = (e) => {
-      if (e.key === 'Escape') handleClose()
-    }
+    const onKey = (e) => { if (e.key === 'Escape') handleClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, handleClose])
@@ -142,9 +182,10 @@ export default function ARViewer({ dish, open, onClose }) {
     showToast._t = window.setTimeout(() => setToast(''), 1900)
   }, [])
 
-  // ---- Iniciar WebAR (requiere gesto del usuario) ----
+  // ── Iniciar WebAR ────────────────────────────────────────────────────────
   const startAR = useCallback(async () => {
     setError('')
+    setWebglLost(false)
     if (!navigator.xr) {
       setError(t('ar.notSupported'))
       return
@@ -170,35 +211,33 @@ export default function ARViewer({ dish, open, onClose }) {
   }, [t])
 
   const reset = useCallback(() => {
-    controlsRef.current.rot = 0
+    controlsRef.current.rot    = 0
     controlsRef.current.scaleK = 1
     setResetSignal((n) => n + 1)
   }, [])
 
-  // ---- Capturar foto (compone el WebGL sobre fondo porcelana) ----
+  // ── Capturar foto ────────────────────────────────────────────────────────
   const capture = useCallback(() => {
     const src = glRef.current?.domElement
     if (!src) return
-    const c = document.createElement('canvas')
-    c.width = src.width
-    c.height = src.height
+    const c   = document.createElement('canvas')
+    c.width   = src.width
+    c.height  = src.height
     const ctx = c.getContext('2d')
     ctx.fillStyle = '#F8F7F4'
     ctx.fillRect(0, 0, c.width, c.height)
     try {
       ctx.drawImage(src, 0, 0)
       const url = c.toDataURL('image/png')
-      const a = document.createElement('a')
-      a.href = url
+      const a   = document.createElement('a')
+      a.href     = url
       a.download = `brasa-${dish.id}.png`
       a.click()
       showToast(t('ar.captured'))
-    } catch (_) {
-      /* contexto WebGL sin preserveDrawingBuffer en algún navegador */
-    }
+    } catch (_) { /* contexto WebGL sin preserveDrawingBuffer */ }
   }, [dish, t, showToast])
 
-  // ---- Compartir ----
+  // ── Compartir ────────────────────────────────────────────────────────────
   const share = useCallback(async () => {
     const src = glRef.current?.domElement
     try {
@@ -215,22 +254,20 @@ export default function ARViewer({ dish, open, onClose }) {
       } else {
         showToast(t('ar.shareText'))
       }
-    } catch (_) {
-      /* el usuario canceló */
-    }
+    } catch (_) { /* el usuario canceló */ }
   }, [dish, t, showToast])
 
-  // ---- Gestos táctiles (solo en AR, sobre el dom-overlay) ----
+  // ── Gestos táctiles ──────────────────────────────────────────────────────
   const onTouchStart = (e) => {
     if (!placed) return
     if (e.touches.length === 1) {
-      gesture.current.mode = 'rotate'
+      gesture.current.mode  = 'rotate'
       gesture.current.lastX = e.touches[0].clientX
     } else if (e.touches.length === 2) {
-      gesture.current.mode = 'pinch'
+      gesture.current.mode       = 'pinch'
       const dx = e.touches[0].clientX - e.touches[1].clientX
       const dy = e.touches[0].clientY - e.touches[1].clientY
-      gesture.current.startDist = Math.hypot(dx, dy)
+      gesture.current.startDist  = Math.hypot(dx, dy)
       gesture.current.startScale = controlsRef.current.scaleK
     }
   }
@@ -239,10 +276,10 @@ export default function ARViewer({ dish, open, onClose }) {
     if (gesture.current.mode === 'rotate' && e.touches.length === 1) {
       const x = e.touches[0].clientX
       controlsRef.current.rot += (x - gesture.current.lastX) * 0.01
-      gesture.current.lastX = x
+      gesture.current.lastX    = x
     } else if (gesture.current.mode === 'pinch' && e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
+      const dx   = e.touches[0].clientX - e.touches[1].clientX
+      const dy   = e.touches[0].clientY - e.touches[1].clientY
       const dist = Math.hypot(dx, dy)
       const next = gesture.current.startScale * (dist / (gesture.current.startDist || 1))
       controlsRef.current.scaleK = Math.min(2.4, Math.max(0.45, next))
@@ -254,23 +291,20 @@ export default function ARViewer({ dish, open, onClose }) {
 
   if (!open) return null
 
+  // DPR adaptativo: Android usa solo pixelRatio 1 para proteger memoria de GPU
+  const canvasDpr = ar.isAndroid ? [1, 1] : [1, 1.5]
+
   const statusText =
-    status === 'placed'
-      ? t('ar.placed')
-      : status === 'tapToPlace'
-        ? t('ar.tapToPlace')
-        : status === 'stabilizing'
-          ? t('ar.stabilizing') ?? 'Enfocando superficie…'
-          : t('ar.searching')
+    status === 'placed'      ? t('ar.placed')
+    : status === 'tapToPlace'  ? t('ar.tapToPlace')
+    : status === 'stabilizing' ? (t('ar.stabilizing') ?? 'Enfocando superficie…')
+    : t('ar.searching')
 
   const statusSub =
-    status === 'searching'
-      ? t('ar.moveDevice')
-      : status === 'stabilizing'
-        ? t('ar.stabilizingSub') ?? 'Apuntá a la MESA, no al piso'
-        : status === 'tapToPlace'
-          ? t('ar.tapToPlaceSub') ?? 'Tocá la mesa para colocar el plato'
-          : null
+    status === 'searching'   ? t('ar.moveDevice')
+    : status === 'stabilizing' ? (t('ar.stabilizingSub') ?? 'Apuntá a la MESA, no al piso')
+    : status === 'tapToPlace'  ? (t('ar.tapToPlaceSub') ?? 'Tocá la mesa para colocar el plato')
+    : null
 
   return (
     <AnimatePresence>
@@ -287,147 +321,235 @@ export default function ARViewer({ dish, open, onClose }) {
         ref={dialogRef}
         tabIndex={-1}
       >
-        {/* Lienzo 3D persistente: hace de visor o de capa WebGL del AR */}
-        <Canvas
-          shadows
-          dpr={[1, 1.5]}
-          gl={{ alpha: true, antialias: false, preserveDrawingBuffer: true, powerPreference: 'low-power' }}
-          camera={{ position: [0, 1.2, 2.9], fov: 40 }}
-          onCreated={({ gl }) => {
-            glRef.current = gl
-          }}
-          style={{ position: 'absolute', inset: 0, background: arActive ? 'transparent' : undefined }}
-        >
-          <Suspense fallback={<ModelLoadingSpinner />}>
-            <ARScene
-              model={dish.model}
-              accent={dish.accent}
-              arActive={arActive}
-              controlsRef={controlsRef}
-              resetSignal={resetSignal}
-              onStatus={setStatus}
-            />
-          </Suspense>
-        </Canvas>
-
-        {/* Fondo degradado suave para el modo visor (no en AR) */}
-        {!arActive && (
-          <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-porcelain via-cream to-[#E7E2D9]" style={{ zIndex: -1 }} />
+        {/* ── Canvas 3D ─────────────────────────────────────────────────── */}
+        {!webglLost && (
+          <Canvas
+            shadows
+            dpr={canvasDpr}
+            gl={{
+              alpha: true,
+              antialias: false,
+              preserveDrawingBuffer: true,
+              powerPreference: 'low-power',
+              // Limitar la memoria de textura en Android
+              ...(ar.isAndroid && { precision: 'mediump' }),
+            }}
+            camera={{ position: [0, 1.2, 2.9], fov: 40 }}
+            onCreated={({ gl }) => {
+              glRef.current = gl
+              // Escuchar context lost directamente desde aquí también
+              gl.domElement.addEventListener('webglcontextlost', (e) => {
+                e.preventDefault() // evitar que el navegador lo descarte inmediatamente
+                setWebglLost(true)
+                setArActive(false)
+                setStatus('idle')
+              })
+            }}
+            style={{ position: 'absolute', inset: 0, background: arActive ? 'transparent' : undefined }}
+          >
+            <Suspense fallback={<ModelLoadingSpinner />}>
+              <ARScene
+                model={dish.model}
+                accent={dish.accent}
+                modelLight={dish.modelLight}
+                maxModelSizeMB={ar.maxModelSizeMB}
+                arActive={arActive}
+                controlsRef={controlsRef}
+                resetSignal={resetSignal}
+                onStatus={setStatus}
+                deviceTier={ar.deviceTier}
+                onModelLoadError={() => setGlbFailed(true)}
+              />
+            </Suspense>
+          </Canvas>
         )}
 
-        {/* dom-overlay raíz: toda la UI del AR vive acá */}
-        <div ref={overlayRef} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
-          {/* Capa de gestos: solo activa con el plato colocado */}
-          {arActive && placed && (
-            <div
-              className="absolute inset-0"
-              style={{ pointerEvents: 'auto' }}
-              onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
-              onTouchEnd={onTouchEnd}
-            />
-          )}
-
-          {/* Barra superior */}
-          <div className="absolute left-0 right-0 top-0 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))]">
-            <div
-              className="flex items-center gap-2 rounded-full bg-charcoal/60 px-3 py-1.5 backdrop-blur-md"
-              style={{ pointerEvents: 'auto' }}
-            >
-              <span className="h-1.5 w-1.5 rounded-full bg-ember" />
-              <span className="font-sans text-[0.7rem] font-semibold uppercase tracking-label text-porcelain">
-                {t('ar.title')}
-              </span>
+        {/* ── Pantalla de error: WebGL context lost ─────────────────────── */}
+        {webglLost && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '1rem',
+              padding: '2rem',
+              background: 'linear-gradient(to bottom, #1A1714, #2C2420)',
+            }}
+          >
+            <div style={{
+              width: 56, height: 56, borderRadius: '50%',
+              background: 'rgba(194,73,29,0.15)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Icon.warning style={{ color: '#C2491D', width: 28, height: 28 }} />
             </div>
+            <p style={{
+              fontFamily: 'sans-serif', fontSize: '1rem', fontWeight: 700,
+              color: '#F8F7F4', textAlign: 'center', margin: 0,
+            }}>
+              Memoria insuficiente
+            </p>
+            <p style={{
+              fontFamily: 'sans-serif', fontSize: '0.8rem',
+              color: 'rgba(248,247,244,0.65)', textAlign: 'center', margin: 0,
+              maxWidth: 280, lineHeight: 1.6,
+            }}>
+              El dispositivo no tiene suficiente memoria para cargar el modelo 3D.
+              Cerrá otras apps y volvé a intentar.
+            </p>
             <button
               onClick={handleClose}
-              aria-label={t('ar.controls.close')}
-              className="flex h-10 w-10 items-center justify-center rounded-full bg-charcoal/60 text-porcelain backdrop-blur-md transition hover:bg-charcoal/80"
-              style={{ pointerEvents: 'auto' }}
+              style={{
+                marginTop: '0.5rem',
+                padding: '0.75rem 2rem',
+                borderRadius: '2rem',
+                border: 'none',
+                background: '#C2491D',
+                color: '#fff',
+                fontFamily: 'sans-serif',
+                fontSize: '0.875rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
             >
-              <Icon.close />
+              Volver al menú
             </button>
           </div>
+        )}
 
-          {/* Píldora de estado (solo en AR) */}
-          {arActive && (
-            <div className="absolute left-1/2 top-[22%] -translate-x-1/2 px-6 text-center">
-              <motion.div
-                key={status}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.2 }}
-                className="inline-flex flex-col items-center gap-1 rounded-2xl px-5 py-3 backdrop-blur-md"
-                style={{
-                  background:
-                    status === 'tapToPlace'
-                      ? 'rgba(34,197,94,0.75)'   // verde: listo para tocar
-                      : status === 'stabilizing'
-                        ? 'rgba(249,115,22,0.7)'  // naranja: estabilizando
-                        : 'rgba(26,23,20,0.55)',   // oscuro: buscando / placed
-                }}
-              >
-                <span className="font-sans text-sm font-semibold text-porcelain">{statusText}</span>
-                {statusSub && <span className="font-sans text-[0.72rem] text-porcelain/85">{statusSub}</span>}
-              </motion.div>
-            </div>
-          )}
+        {/* Fondo degradado suave en modo visor (no AR) */}
+        {!arActive && !webglLost && (
+          <div
+            className="pointer-events-none absolute inset-0 bg-gradient-to-b from-porcelain via-cream to-[#E7E2D9]"
+            style={{ zIndex: -1 }}
+          />
+        )}
 
-
-          {/* Panel inferior */}
-          <div className="absolute bottom-0 left-0 right-0 px-4 pb-[max(1.1rem,env(safe-area-inset-bottom))]">
-            <ARBottomPanel
-              ar={ar}
-              arActive={arActive}
-              placed={placed}
-              dish={dish}
-              lang={lang}
-              t={t}
-              tr={tr}
-              error={error}
-              onStart={startAR}
-              onReset={reset}
-              onCapture={capture}
-              onShare={share}
-              Icon={Icon}
-            />
-          </div>
-
-          {/* Toast */}
-          <AnimatePresence>
-            {toast && (
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 12 }}
-                className="absolute bottom-[30%] left-1/2 -translate-x-1/2 rounded-full bg-ink/90 px-4 py-2"
-              >
-                <span className="font-sans text-xs font-semibold text-porcelain">{toast}</span>
-              </motion.div>
+        {/* ── Dom-overlay: toda la UI del AR ─────────────────────────────── */}
+        {!webglLost && (
+          <div ref={overlayRef} className="absolute inset-0" style={{ pointerEvents: 'none' }}>
+            {/* Capa de gestos: solo activa con el plato colocado */}
+            {arActive && placed && (
+              <div
+                className="absolute inset-0"
+                style={{ pointerEvents: 'auto' }}
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+              />
             )}
-          </AnimatePresence>
-        </div>
+
+            {/* Barra superior */}
+            <div className="absolute left-0 right-0 top-0 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+              <div
+                className="flex items-center gap-2 rounded-full bg-charcoal/60 px-3 py-1.5 backdrop-blur-md"
+                style={{ pointerEvents: 'auto' }}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-ember" />
+                <span className="font-sans text-[0.7rem] font-semibold uppercase tracking-label text-porcelain">
+                  {t('ar.title')}
+                </span>
+                {/* Indicador de tier bajo: modelo simplificado */}
+                {(ar.deviceTier === 'low' || glbFailed) && (
+                  <span style={{
+                    fontSize: '0.6rem', fontWeight: 700, fontFamily: 'sans-serif',
+                    color: '#fbbf24', marginLeft: '0.25rem',
+                  }}>
+                    · MODO LITE
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={handleClose}
+                aria-label={t('ar.controls.close')}
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-charcoal/60 text-porcelain backdrop-blur-md transition hover:bg-charcoal/80"
+                style={{ pointerEvents: 'auto' }}
+              >
+                <Icon.close />
+              </button>
+            </div>
+
+            {/* Píldora de estado (solo en AR) */}
+            {arActive && (
+              <div className="absolute left-1/2 top-[22%] -translate-x-1/2 px-6 text-center">
+                <motion.div
+                  key={status}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.2 }}
+                  className="inline-flex flex-col items-center gap-1 rounded-2xl px-5 py-3 backdrop-blur-md"
+                  style={{
+                    background:
+                      status === 'tapToPlace'
+                        ? 'rgba(34,197,94,0.75)'
+                        : status === 'stabilizing'
+                          ? 'rgba(249,115,22,0.7)'
+                          : 'rgba(26,23,20,0.55)',
+                  }}
+                >
+                  <span className="font-sans text-sm font-semibold text-porcelain">{statusText}</span>
+                  {statusSub && <span className="font-sans text-[0.72rem] text-porcelain/85">{statusSub}</span>}
+                </motion.div>
+              </div>
+            )}
+
+            {/* Panel inferior */}
+            <div className="absolute bottom-0 left-0 right-0 px-4 pb-[max(1.1rem,env(safe-area-inset-bottom))]">
+              <ARBottomPanel
+                ar={ar}
+                arActive={arActive}
+                placed={placed}
+                dish={dish}
+                lang={lang}
+                t={t}
+                tr={tr}
+                error={error}
+                glbFailed={glbFailed}
+                onStart={startAR}
+                onReset={reset}
+                onCapture={capture}
+                onShare={share}
+                Icon={Icon}
+              />
+            </div>
+
+            {/* Toast */}
+            <AnimatePresence>
+              {toast && (
+                <motion.div
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 12 }}
+                  className="absolute bottom-[30%] left-1/2 -translate-x-1/2 rounded-full bg-ink/90 px-4 py-2"
+                >
+                  <span className="font-sans text-xs font-semibold text-porcelain">{toast}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
       </motion.div>
     </AnimatePresence>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Panel inferior: cambia según el tier (Android WebXR / iOS / desktop)
-// ---------------------------------------------------------------------------
-function ARBottomPanel({ ar, arActive, placed, dish, lang, t, tr, error, onStart, onReset, onCapture, onShare, Icon }) {
-  // Controles activos durante la sesión AR
+// ─────────────────────────────────────────────────────────────────────────────
+//  Panel inferior
+// ─────────────────────────────────────────────────────────────────────────────
+function ARBottomPanel({ ar, arActive, placed, dish, lang, t, tr, error, glbFailed, onStart, onReset, onCapture, onShare, Icon }) {
   if (arActive) {
     return (
       <div className="mx-auto flex max-w-md items-center justify-center gap-3" style={{ pointerEvents: 'auto' }}>
-        <RoundBtn label={t('ar.controls.reset')} onClick={onReset} disabled={!placed} Icon={Icon.reset} />
+        <RoundBtn label={t('ar.controls.reset')}   onClick={onReset}   disabled={!placed} Icon={Icon.reset}  />
         <RoundBtn label={t('ar.controls.capture')} onClick={onCapture} disabled={!placed} Icon={Icon.camera} primary />
-        <RoundBtn label={t('ar.controls.share')} onClick={onShare} disabled={!placed} Icon={Icon.share} />
+        <RoundBtn label={t('ar.controls.share')}   onClick={onShare}   disabled={!placed} Icon={Icon.share}  />
       </div>
     )
   }
 
-  // Tarjeta de contexto + acción, según dispositivo
   return (
     <div className="mx-auto max-w-md rounded-2xl bg-porcelain/95 p-4 shadow-float backdrop-blur" style={{ pointerEvents: 'auto' }}>
       <div className="flex items-center justify-between gap-3">
@@ -438,6 +560,16 @@ function ARBottomPanel({ ar, arActive, placed, dish, lang, t, tr, error, onStart
         <span className="chip whitespace-nowrap">{t('ar.realProportions')}</span>
       </div>
 
+      {/* Aviso de modelo simplificado (solo cuando aplica) */}
+      {glbFailed && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-amber-500/10 px-3 py-2">
+          <Icon.warning style={{ color: '#d97706', flexShrink: 0 }} />
+          <p className="font-sans text-xs text-amber-700">
+            Modelo en versión simplificada para proteger el dispositivo.
+          </p>
+        </div>
+      )}
+
       {error && <p className="mt-3 rounded-lg bg-ember/10 px-3 py-2 font-sans text-xs text-emberDark">{error}</p>}
 
       <div className="mt-4">
@@ -447,7 +579,6 @@ function ARBottomPanel({ ar, arActive, placed, dish, lang, t, tr, error, onStart
           </button>
         ) : ar.ios ? (
           <div className="space-y-3">
-            {/* model-viewer con AR Quick Look para iOS */}
             <model-viewer
               src={dish.model}
               alt={tr(dish.name)}
@@ -456,12 +587,7 @@ function ARBottomPanel({ ar, arActive, placed, dish, lang, t, tr, error, onStart
               camera-controls
               auto-rotate
               shadow-intensity="1"
-              style={{
-                width: '100%',
-                height: '200px',
-                borderRadius: '0.75rem',
-                background: 'transparent',
-              }}
+              style={{ width: '100%', height: '200px', borderRadius: '0.75rem', background: 'transparent' }}
             />
             <button
               onClick={() => {

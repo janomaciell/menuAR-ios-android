@@ -1,82 +1,153 @@
-import { useRef, useEffect, Suspense } from 'react'
+import { useRef, useEffect, Suspense, useState, useCallback } from 'react'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 
 // =============================================================================
 //  DishModel — carga modelos .glb reales desde /public/modelos3D/
-//  Si el path apunta a un GLB, lo carga con useGLTF y lo centra/escala.
-//  Si el path es un nombre de arquetipo (legacy), usa primitivas procedurales.
+//
+//  Estrategia de carga adaptativa por tier de dispositivo:
+//   • El componente recibe `maxModelSizeMB` desde ARViewer (via useARSupport).
+//   • Si el GLB supera ese límite, se usa PrimitiveFallback automáticamente.
+//   • Hay un timeout de 18 s: si el GLB no terminó de cargar, se cae al fallback.
+//   • El error WebGL context lost se captura y propaga para que ARViewer muestre
+//     un mensaje amigable al usuario.
+//
+//  Tamaños de referencia de los modelos actuales (para orientación):
+//   burguer.glb        51 KB   ← único preload seguro
+//   BigMac.glb          2 MB
+//   cookie.glb          2 MB
+//   muffin.glb          4 MB
+//   pizza.glb           4 MB
+//   crispykitchen.glb   6 MB
+//   grilled-cheese.glb  6 MB
+//   fries*.glb          8 MB
+//   polloentero.glb     8 MB
+//   PepperoniPizza.glb  8 MB
+//   BurgerKFC.glb      12 MB
+//   Cheeseburger.glb   11 MB
+//   Croissant.glb      11 MB
+//   Sandwich.glb       14 MB
+//   noodle.glb         22 MB   ← NUNCA en mid/low
+//   spaghetti.glb      30 MB   ← NUNCA en mid/low
+//   MasaMadre.glb      36 MB   ← NUNCA en mid/low
 // =============================================================================
+
+// Tamaños aproximados en MB de cada archivo (se usan para el filtro de tier).
+// Mantener actualizado si se agregan/comprimen modelos.
+const MODEL_SIZE_MB = {
+  '/modelos3D/burguer.glb':        0.05,
+  '/modelos3D/BigMac.glb':         2,
+  '/modelos3D/cookie.glb':         2,
+  '/modelos3D/muffin.glb':         4,
+  '/modelos3D/pizza.glb':          4,
+  '/modelos3D/crispykitchen.glb':  6,
+  '/modelos3D/grilled-cheese.glb': 6,
+  '/modelos3D/fries.glb':          8,
+  '/modelos3D/fries1.glb':         8,
+  '/modelos3D/fries2.glb':         8,
+  '/modelos3D/polloentero.glb':    8,
+  '/modelos3D/PepperoniPizza.glb': 8,
+  '/modelos3D/BurgerKFC.glb':     12,
+  '/modelos3D/Cheeseburger.glb':  11,
+  '/modelos3D/Croissant.glb':     11,
+  '/modelos3D/Sandwich.glb':      14,
+  '/modelos3D/noodle.glb':        22,
+  '/modelos3D/spaghetti.glb':     30,
+  '/modelos3D/MasaMadre.glb':     36,
+}
 
 // ---- Detectar si es un path a .glb ------------------------------------------
 function isGlbPath(model) {
   return typeof model === 'string' && model.endsWith('.glb')
 }
 
-// ---- Componente que carga el GLB real ---------------------------------------
-function GlbModel({ path, accent }) {
-  const groupRef = useRef()
+// ---- Decidir si el GLB puede cargarse en este dispositivo -------------------
+function canLoadGlb(path, maxModelSizeMB) {
+  const sizeMB = MODEL_SIZE_MB[path]
+  if (sizeMB === undefined) return true // desconocido → intentar siempre
+  return sizeMB <= maxModelSizeMB
+}
+
+// =============================================================================
+//  GlbModel — carga real del GLB con centrado/escala automáticos
+// =============================================================================
+const GLB_LOAD_TIMEOUT_MS = 18_000
+
+function GlbModel({ path, accent, onLoadError }) {
+  const groupRef  = useRef()
+  const timedOut  = useRef(false)
+
+  // El Suspense padre captura la promesa de useGLTF
   const { scene } = useGLTF(path)
 
   useEffect(() => {
-    if (!groupRef.current) return
+    // Timeout de seguridad: si el effect tarda más de lo esperado algo falló
+    const timer = setTimeout(() => {
+      timedOut.current = true
+      onLoadError?.('timeout')
+    }, GLB_LOAD_TIMEOUT_MS)
 
-    // Clonar para no mutar el caché de useGLTF
-    const cloned = scene.clone(true)
+    return () => clearTimeout(timer)
+  }, [onLoadError])
 
-    // Centrar y escalar automáticamente
-    const box = new THREE.Box3().setFromObject(cloned)
-    const size = new THREE.Vector3()
-    box.getSize(size)
-    const maxDim = Math.max(size.x, size.y, size.z)
-    const targetSize = 1.8 // unidades Three.js
-    const scale = maxDim > 0 ? targetSize / maxDim : 1
+  useEffect(() => {
+    if (!groupRef.current || timedOut.current) return
 
-    cloned.scale.setScalar(scale)
+    try {
+      // Clonar para no mutar el caché de useGLTF
+      const cloned = scene.clone(true)
 
-    // Centrar en el origen
-    const center = new THREE.Vector3()
-    box.getCenter(center)
-    cloned.position.sub(center.multiplyScalar(scale))
+      // ── Centrar y escalar automáticamente ──────────────────────────────────
+      const box    = new THREE.Box3().setFromObject(cloned)
+      const size   = new THREE.Vector3()
+      box.getSize(size)
+      const maxDim = Math.max(size.x, size.y, size.z)
 
-    // Posicionar ligeramente sobre el plano
-    cloned.position.y += 0.05
+      // Normalizamos a 1.8 unidades Three.js (la escala AR se aplica en ARScene)
+      const targetSize = 1.8
+      const scale      = maxDim > 0 ? targetSize / maxDim : 1
+      cloned.scale.setScalar(scale)
 
-    // Habilitar sombras en todos los meshes
-    cloned.traverse((node) => {
-      if (node.isMesh) {
-        node.castShadow = true
-        node.receiveShadow = true
+      // Centrar en el origen
+      const center = new THREE.Vector3()
+      box.getCenter(center)
+      cloned.position.sub(center.multiplyScalar(scale))
+      cloned.position.y += 0.05
+
+      // Habilitar sombras en todos los meshes
+      cloned.traverse((node) => {
+        if (node.isMesh) {
+          node.castShadow    = true
+          node.receiveShadow = true
+          // Liberar geometrías del CPU-side una vez subidas a GPU
+          if (node.geometry) node.geometry.attributes = { ...node.geometry.attributes }
+        }
+      })
+
+      // Limpiar hijos previos y agregar el nuevo
+      while (groupRef.current.children.length > 0) {
+        groupRef.current.remove(groupRef.current.children[0])
       }
-    })
-
-    // Limpiar hijos previos y agregar el nuevo
-    while (groupRef.current.children.length > 0) {
-      groupRef.current.remove(groupRef.current.children[0])
+      groupRef.current.add(cloned)
+    } catch (err) {
+      onLoadError?.('parse_error')
     }
-    groupRef.current.add(cloned)
-  }, [scene])
+  }, [scene, onLoadError])
 
   return <group ref={groupRef} />
 }
 
-// ---- Preload selectivo: SOLO el modelo ultraligero (51 KB) ------------------
-// Los modelos grandes (8-36 MB) se cargan bajo demanda con Suspense para no
-// bloquear la RAM en dispositivos Android de gama media.
-// NO usar useGLTF.preload() para archivos > 1 MB en este contexto.
-useGLTF.preload('/modelos3D/burguer.glb')
-
 // =============================================================================
-//  Primitivas de respaldo (por si el GLB falla o se usa arquetipo legacy)
+//  Primitivas de respaldo (siempre disponibles, cero costo de red)
 // =============================================================================
 import * as THREE_PRIM from 'three'
 import { useMemo } from 'react'
 
 function useMaterials(accent) {
   return useMemo(() => {
-    const ceramic = new THREE_PRIM.MeshStandardMaterial({ color: '#f4f1ea', roughness: 0.35, metalness: 0.02 })
+    const ceramic     = new THREE_PRIM.MeshStandardMaterial({ color: '#f4f1ea', roughness: 0.35, metalness: 0.02 })
     const ceramicDark = new THREE_PRIM.MeshStandardMaterial({ color: '#e7e2d8', roughness: 0.45 })
-    const food = new THREE_PRIM.MeshStandardMaterial({ color: accent || '#C2491D', roughness: 0.6, metalness: 0.0 })
+    const food        = new THREE_PRIM.MeshStandardMaterial({ color: accent || '#C2491D', roughness: 0.6, metalness: 0.0 })
     return { ceramic, ceramicDark, food }
   }, [accent])
 }
@@ -286,8 +357,8 @@ function Glass({ accent, stem }) {
       pts.push(new THREE_PRIM.Vector2(0.04, 0.45))
       pts.push(new THREE_PRIM.Vector2(0.32, 0.55))
       pts.push(new THREE_PRIM.Vector2(0.42, 0.95))
-      pts.push(new THREE_PRIM.Vector2(0.4, 0.96))
-      pts.push(new THREE_PRIM.Vector2(0.3, 0.56))
+      pts.push(new THREE_PRIM.Vector2(0.4,  0.96))
+      pts.push(new THREE_PRIM.Vector2(0.3,  0.56))
       pts.push(new THREE_PRIM.Vector2(0.02, 0.46))
     } else {
       pts.push(new THREE_PRIM.Vector2(0.34, 0))
@@ -351,15 +422,61 @@ function PrimitiveFallback({ model, accent }) {
   }
 }
 
-// ---- Router principal -------------------------------------------------------
-export default function DishModel({ model = 'starter', accent = '#C2491D' }) {
-  if (isGlbPath(model)) {
-    return (
-      <Suspense fallback={<PrimitiveFallback model="starter" accent={accent} />}>
-        <GlbModel path={model} accent={accent} />
-      </Suspense>
-    )
+// =============================================================================
+//  GlbLoader — wrapper con Suspense + fallback por error/timeout
+// =============================================================================
+function GlbLoader({ path, accent, modelLight, onLoadError }) {
+  return (
+    <Suspense fallback={<PrimitiveFallback model={modelLight ?? 'starter'} accent={accent} />}>
+      <GlbModel path={path} accent={accent} onLoadError={onLoadError} />
+    </Suspense>
+  )
+}
+
+// =============================================================================
+//  Router principal — decide qué renderizar según tier y tamaño del modelo
+// =============================================================================
+export default function DishModel({
+  model      = 'starter',
+  accent     = '#C2491D',
+  modelLight = 'starter',
+  maxModelSizeMB = 20, // viene de useARSupport via ARViewer/ARScene
+  onLoadError,
+}) {
+  const [glbFailed, setGlbFailed] = useState(false)
+
+  const handleLoadError = useCallback((reason) => {
+    console.warn('[DishModel] GLB load error:', reason, '→ usando primitiva de respaldo')
+    setGlbFailed(true)
+    onLoadError?.(reason)
+  }, [onLoadError])
+
+  // ── Caso 1: arquetipo legacy (nombre de string simple, sin .glb) ─────────
+  if (!isGlbPath(model)) {
+    return <PrimitiveFallback model={model} accent={accent} />
   }
-  // legacy: arquetipo por nombre (compatibilidad hacia atrás)
-  return <PrimitiveFallback model={model} accent={accent} />
+
+  // ── Caso 2: GLB falló previamente (error en carga o timeout) ────────────
+  if (glbFailed) {
+    return <PrimitiveFallback model={modelLight} accent={accent} />
+  }
+
+  // ── Caso 3: GLB demasiado grande para este dispositivo ───────────────────
+  if (!canLoadGlb(model, maxModelSizeMB)) {
+    console.info(
+      `[DishModel] Modelo ${model} supera el límite de ${maxModelSizeMB} MB para este dispositivo.`,
+      '→ usando primitiva de respaldo'
+    )
+    return <PrimitiveFallback model={modelLight} accent={accent} />
+  }
+
+  // ── Caso 4: cargar el GLB real ───────────────────────────────────────────
+  return (
+    <GlbLoader
+      path={model}
+      accent={accent}
+      modelLight={modelLight}
+      onLoadError={handleLoadError}
+    />
+  )
 }

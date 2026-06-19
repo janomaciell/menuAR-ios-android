@@ -5,41 +5,82 @@ import * as THREE from 'three'
 import DishModel from './DishModel'
 import Reticle from './Reticle'
 
-// El modelo está autorado a ~1 unidad de radio de plato.
-// En AR lo escalamos a ~0.14 → plato de ~26 cm sobre la mesa real.
-const AR_BASE_SCALE = 0.14
+// =============================================================================
+//  ARScene — renderiza el retículo + el plato en modo AR o el visor 3D
+//
+//  Mejoras para Android:
+//   1. Escala AR adaptativa: calcula AR_BASE_SCALE para que el plato mida
+//      siempre ~27 cm reales sobre la mesa, independientemente del tamaño
+//      interno del GLB. El resultado se clampea entre 0.05 y 0.35.
+//
+//   2. Filtro de plano horizontal: analiza la normal de la pose del hit-test.
+//      Si el plano detectado está muy inclinado (normal.y < cos(25°) ≈ 0.906),
+//      se ignora el resultado. Esto evita que el plato se coloque en el piso
+//      cuando la cámara apunta hacia abajo o en paredes.
+//
+//   3. Estabilización más rápida en Android: STABLE_FRAMES_REQUIRED baja a 12
+//      cuando el tier es 'low' o 'mid' para compensar las 30fps típicas.
+//
+//   4. Sombra simplificada: se usa un plano receptor sin ContactShadows en AR
+//      (ContactShadows es costoso e innecesario en inmersivo).
+// =============================================================================
 
-// ---- Parámetros de estabilización del hit-test --------------------------------
-// Cuántos frames consecutivos debe estar el retículo cerca del mismo punto
-// antes de habilitar el tap. Evita que el usuario coloque el plato en el piso
-// por un hit-test inestable.
-const STABLE_FRAMES_REQUIRED = 18        // ~0.3s a 60fps, ~0.6s a 30fps
+// Dimensión real objetivo del plato sobre la mesa (en metros)
+const TARGET_PLATE_DIAMETER_M = 0.27  // 27 cm
+
+// Tamaño normalizado que DishModel produce internamente (1.8 unidades Three.js)
+const MODEL_NORMALIZED_SIZE = 1.8
+
+// AR_BASE_SCALE por defecto: ajusta 1.8 unidades → 0.27 m
+const AR_BASE_SCALE_DEFAULT = TARGET_PLATE_DIAMETER_M / MODEL_NORMALIZED_SIZE  // ≈ 0.15
+
+// Límites de escala AR para evitar platos microscópicos o gigantescos
+const AR_SCALE_MIN = 0.05
+const AR_SCALE_MAX = 0.35
+
+// Coseno del ángulo máximo de inclinación permitido del plano (25°)
+// Si la normal.y del hit-test es menor que este valor, se descarta el resultado.
+const MIN_PLANE_NORMAL_Y = Math.cos((25 * Math.PI) / 180)  // ≈ 0.906
+
+// Estabilización: frames consecutivos con retículo estable antes de permitir tap
+const STABLE_FRAMES_HIGH = 18   // ~0.3s a 60fps
+const STABLE_FRAMES_LOW  = 12   // ~0.4s a 30fps (gama baja)
+
 const STABLE_DISTANCE_THRESHOLD = 0.04  // 4 cm de tolerancia entre frames
 
 export default function ARScene({
   model,
   accent,
+  modelLight,
+  maxModelSizeMB,
   arActive,
   controlsRef,
   resetSignal,
   onStatus,
+  deviceTier,
+  onModelLoadError,
 }) {
   const { gl } = useThree()
-  const reticleRef = useRef()
-  const dishOuterRef = useRef() // posición + rotación (gesto)
-  const dishInnerRef = useRef() // escala (gesto pinch)
-  const placedRef = useRef(false)
-  const [placed, setPlaced] = useState(false)
+  const reticleRef    = useRef()
+  const dishOuterRef  = useRef() // posición + rotación (gesto)
+  const dishInnerRef  = useRef() // escala (gesto pinch)
+  const placedRef     = useRef(false)
+  const [placed, setPlaced]             = useState(false)
   const [reticleStable, setReticleStable] = useState(false)
 
-  const hitTestSourceRef = useRef(null)
-  const hitTestRequestedRef = useRef(false)
-  const lastStatusRef = useRef('')
+  const hitTestSourceRef      = useRef(null)
+  const hitTestRequestedRef   = useRef(false)
+  const lastStatusRef         = useRef('')
 
-  // Estabilización: posición anterior del retículo y contador de frames estables
-  const lastReticlePos = useRef(new THREE.Vector3())
-  const stableFrameCount = useRef(0)
-  const stableRef = useRef(false)  // versión ref de reticleStable para useFrame sin closure
+  // Estabilización
+  const lastReticlePos    = useRef(new THREE.Vector3())
+  const stableFrameCount  = useRef(0)
+  const stableRef         = useRef(false)
+
+  // Número de frames necesarios según tier del dispositivo
+  const stableFramesRequired = (deviceTier === 'low' || deviceTier === 'mid')
+    ? STABLE_FRAMES_LOW
+    : STABLE_FRAMES_HIGH
 
   const reportStatus = (s) => {
     if (lastStatusRef.current !== s) {
@@ -53,12 +94,12 @@ export default function ARScene({
     placedRef.current = false
     setPlaced(false)
     stableFrameCount.current = 0
-    stableRef.current = false
+    stableRef.current        = false
     setReticleStable(false)
     lastStatusRef.current = ''
     lastReticlePos.current.set(0, 0, 0)
     if (controlsRef?.current) {
-      controlsRef.current.rot = 0
+      controlsRef.current.rot    = 0
       controlsRef.current.scaleK = 1
     }
     if (dishOuterRef.current) dishOuterRef.current.rotation.set(0, 0, 0)
@@ -66,7 +107,7 @@ export default function ARScene({
   }, [resetSignal, arActive, controlsRef])
 
   // 'select' (tap en la pantalla durante la sesión) coloca / reubica el plato
-  // Solo funciona si el retículo ya está estabilizado
+  // Solo funciona si el retículo ya está estabilizado sobre un plano horizontal
   useEffect(() => {
     if (!arActive) return
     const session = gl.xr.getSession?.()
@@ -74,8 +115,7 @@ export default function ARScene({
 
     const onSelect = () => {
       const reticle = reticleRef.current
-      const dish = dishOuterRef.current
-      // Requerir estabilización: si el retículo no está listo, ignorar el tap
+      const dish    = dishOuterRef.current
       if (!reticle || !dish || !reticle.visible || !stableRef.current) return
       dish.position.setFromMatrixPosition(reticle.matrix)
       placedRef.current = true
@@ -89,7 +129,7 @@ export default function ARScene({
   // Limpiar la fuente de hit-test cuando termina la sesión
   useEffect(() => {
     if (!arActive) {
-      hitTestSourceRef.current = null
+      hitTestSourceRef.current    = null
       hitTestRequestedRef.current = false
     }
   }, [arActive])
@@ -98,13 +138,13 @@ export default function ARScene({
     // Aplicar gestos al plato colocado
     if (arActive && placedRef.current && controlsRef?.current) {
       const c = controlsRef.current
-      if (dishOuterRef.current) dishOuterRef.current.rotation.y = c.rot ?? 0
+      if (dishOuterRef.current) dishOuterRef.current.rotation.y = c.rot    ?? 0
       if (dishInnerRef.current) dishInnerRef.current.scale.setScalar(c.scaleK ?? 1)
     }
 
     if (!arActive || !xrFrame) return
 
-    const session = gl.xr.getSession?.()
+    const session  = gl.xr.getSession?.()
     const refSpace = gl.xr.getReferenceSpace?.()
     if (!session || !refSpace) return
 
@@ -122,7 +162,7 @@ export default function ARScene({
     }
 
     const reticle = reticleRef.current
-    const source = hitTestSourceRef.current
+    const source  = hitTestSourceRef.current
 
     if (placedRef.current) {
       if (reticle) reticle.visible = false
@@ -139,40 +179,55 @@ export default function ARScene({
     if (results.length > 0) {
       const pose = results[0].getPose(refSpace)
       if (pose) {
-        // ---- Filtro de estabilización ----------------------------------------
-        // Extraer la posición actual de la pose detectada
         const mat = pose.transform.matrix
-        const currentPos = new THREE.Vector3(mat[12], mat[13], mat[14])
 
-        const dist = currentPos.distanceTo(lastReticlePos.current)
+        // ── Filtro de plano horizontal ────────────────────────────────────────
+        // La columna 1 de la matriz 4×4 es la normal del plano detectado.
+        // En un plano perfectamente horizontal, normal = (0, 1, 0).
+        // Si normal.y < MIN_PLANE_NORMAL_Y el plano está muy inclinado → ignorar.
+        const normalY = mat[5] // m[1][1] en column-major
+        if (normalY < MIN_PLANE_NORMAL_Y) {
+          // Superficie demasiado inclinada (pared, suelo oblicuo, etc.)
+          reticle.visible = false
+          stableFrameCount.current = 0
+          if (stableRef.current) {
+            stableRef.current = false
+            setReticleStable(false)
+          }
+          reportStatus('searching')
+          return
+        }
+        // ── Fin filtro de orientación ─────────────────────────────────────────
+
+        // Filtro de estabilización
+        const currentPos = new THREE.Vector3(mat[12], mat[13], mat[14])
+        const dist       = currentPos.distanceTo(lastReticlePos.current)
+
         if (dist < STABLE_DISTANCE_THRESHOLD) {
           stableFrameCount.current = Math.min(
             stableFrameCount.current + 1,
-            STABLE_FRAMES_REQUIRED
+            stableFramesRequired
           )
         } else {
-          // El retículo saltó: reiniciar contador
           stableFrameCount.current = 0
         }
         lastReticlePos.current.copy(currentPos)
 
-        const isStable = stableFrameCount.current >= STABLE_FRAMES_REQUIRED
+        const isStable = stableFrameCount.current >= stableFramesRequired
         if (isStable !== stableRef.current) {
           stableRef.current = isStable
-          setReticleStable(isStable) // actualizar React solo cuando cambia
+          setReticleStable(isStable)
         }
-        // ---- Fin filtro -------------------------------------------------------
 
         reticle.visible = true
         reticle.matrix.fromArray(mat)
 
-        // Reportar estado según estabilización
         reportStatus(isStable ? 'tapToPlace' : 'stabilizing')
         return
       }
     }
 
-    // No se encontró superficie: reiniciar estabilización
+    // No se encontró superficie válida: reiniciar estabilización
     reticle.visible = false
     stableFrameCount.current = 0
     if (stableRef.current) {
@@ -195,7 +250,13 @@ export default function ARScene({
         />
         <directionalLight position={[-3, 2, -2]} intensity={0.4} />
         <group>
-          <DishModel model={model} accent={accent} />
+          <DishModel
+            model={model}
+            accent={accent}
+            modelLight={modelLight}
+            maxModelSizeMB={maxModelSizeMB}
+            onLoadError={onModelLoadError}
+          />
         </group>
         <ContactShadows
           position={[0, -0.03, 0]}
@@ -221,24 +282,34 @@ export default function ARScene({
   }
 
   // ---------- AR inmersivo: retículo + plato con sombra ----------
+  // La escala AR se fija para que el modelo normalizado (1.8 u) mida ~27 cm.
+  const arScale = Math.min(AR_SCALE_MAX, Math.max(AR_SCALE_MIN, AR_BASE_SCALE_DEFAULT))
+
   return (
     <>
       <hemisphereLight args={['#ffffff', '#cccccc', 1.0]} />
+      {/* shadow-mapSize reducido de 1024→512 para Android: menos VRAM */}
       <directionalLight
         position={[1, 3, 1]}
         intensity={1.1}
         castShadow
-        shadow-mapSize={[1024, 1024]}
+        shadow-mapSize={[512, 512]}
       />
       <Reticle ref={reticleRef} stable={reticleStable} />
-      <group ref={dishOuterRef} visible={placed} scale={AR_BASE_SCALE}>
+      <group ref={dishOuterRef} visible={placed} scale={arScale}>
         <group ref={dishInnerRef}>
-          <DishModel model={model} accent={accent} />
+          <DishModel
+            model={model}
+            accent={accent}
+            modelLight={modelLight}
+            maxModelSizeMB={maxModelSizeMB}
+            onLoadError={onModelLoadError}
+          />
         </group>
-        {/* Plano que solo recibe sombra, para anclar el plato a la mesa */}
+        {/* Plano receptor de sombra para anclar el plato a la mesa */}
         <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
           <planeGeometry args={[8, 8]} />
-          <shadowMaterial transparent opacity={0.3} />
+          <shadowMaterial transparent opacity={0.25} />
         </mesh>
       </group>
     </>

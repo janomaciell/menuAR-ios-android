@@ -115,6 +115,7 @@ export const dishes = [
     id: 'bruschettas',
     category: 'entradas',
     model: '/modelos3D/Sandwich.glb',
+    modelLight: 'starter',
     accent: '#C2491D',
     name: { es: 'Bruschettas de la casa', en: 'House Bruschettas' },
     description: {
@@ -147,6 +148,7 @@ export const dishes = [
     id: 'empanadas-gourmet',
     category: 'entradas',
     model: '/modelos3D/MasaMadre.glb',
+    modelLight: 'starter',
     accent: '#B5582F',
     name: { es: 'Empanadas gourmet de osobuco', en: 'Gourmet Ossobuco Empanadas' },
     description: {
@@ -180,6 +182,7 @@ export const dishes = [
     id: 'cesar-pollo',
     category: 'ensaladas',
     model: '/modelos3D/grilled-cheese.glb',
+    modelLight: 'salad',
     accent: '#7A8C4A',
     name: { es: 'César de pollo grillado', en: 'Grilled Chicken Caesar' },
     description: {
@@ -209,6 +212,7 @@ export const dishes = [
     id: 'quinoa-bowl',
     category: 'ensaladas',
     model: '/modelos3D/grilled-cheese.glb',
+    modelLight: 'salad',
     accent: '#6E8B3D',
     name: { es: 'Bowl de quinoa y palta', en: 'Quinoa & Avocado Bowl' },
     description: {
@@ -240,6 +244,7 @@ export const dishes = [
     id: 'ravioles-cordero',
     category: 'pastas',
     model: '/modelos3D/spaghetti.glb',
+    modelLight: 'pasta',
     accent: '#B5582F',
     name: { es: 'Ravioles de cordero', en: 'Lamb Ravioli' },
     description: {
@@ -272,6 +277,7 @@ export const dishes = [
     id: 'fettuccine-alfredo',
     category: 'pastas',
     model: '/modelos3D/noodle.glb',
+    modelLight: 'pasta',
     accent: '#D8A24A',
     name: { es: 'Fettuccine Alfredo', en: 'Fettuccine Alfredo' },
     description: {
@@ -303,6 +309,7 @@ export const dishes = [
     id: 'bife-chorizo',
     category: 'carnes',
     model: '/modelos3D/crispykitchen.glb',
+    modelLight: 'meat',
     accent: '#8A3A1E',
     name: { es: 'Bife de chorizo premium', en: 'Premium Sirloin Steak' },
     description: {
@@ -335,6 +342,7 @@ export const dishes = [
     id: 'ojo-de-bife',
     category: 'carnes',
     model: '/modelos3D/crispykitchen.glb',
+    modelLight: 'meat',
     accent: '#7A2E16',
     name: { es: 'Ojo de bife madurado', en: 'Dry-Aged Ribeye' },
     description: {
@@ -366,6 +374,7 @@ export const dishes = [
     id: 'salmon-grillado',
     category: 'pescados',
     model: '/modelos3D/polloentero.glb',
+    modelLight: 'fish',
     accent: '#D97A4A',
     name: { es: 'Salmón a la parrilla', en: 'Grilled Salmon' },
     description: {
@@ -397,6 +406,7 @@ export const dishes = [
     id: 'brasa-burger',
     category: 'hamburguesas',
     model: '/modelos3D/BurgerKFC.glb',
+    modelLight: 'burger',
     accent: '#A6451F',
     name: { es: 'BRASA Burger', en: 'BRASA Burger' },
     description: {
@@ -428,6 +438,7 @@ export const dishes = [
     id: 'pizza-fugazzeta',
     category: 'pizzas',
     model: '/modelos3D/PepperoniPizza.glb',
+    modelLight: 'pizza',
     accent: '#C9A23E',
     name: { es: 'Fugazzeta rellena', en: 'Stuffed Fugazzeta' },
     description: {
@@ -459,6 +470,7 @@ export const dishes = [
     id: 'cheesecake',
     category: 'postres',
     model: '/modelos3D/cookie.glb',
+    modelLight: 'dessert',
     accent: '#C97B5A',
     name: { es: 'Cheesecake de frutos rojos', en: 'Berry Cheesecake' },
     description: {
@@ -490,6 +502,7 @@ export const dishes = [
     id: 'tiramisu',
     category: 'postres',
     model: '/modelos3D/muffin.glb',
+    modelLight: 'dessert',
     accent: '#9C6B3F',
     name: { es: 'Tiramisú clásico', en: 'Classic Tiramisu' },
     description: {
@@ -521,6 +534,7 @@ export const dishes = [
     id: 'limonada-jengibre',
     category: 'bebidas',
     model: '/modelos3D/Croissant.glb',
+    modelLight: 'drink',
     accent: '#D9B23A',
     name: { es: 'Limonada de jengibre y menta', en: 'Ginger-Mint Lemonade' },
     description: {
@@ -552,6 +566,7 @@ export const dishes = [
     id: 'malbec-reserva',
     category: 'vinos',
     model: '/modelos3D/BigMac.glb',
+    modelLight: 'wine',
     accent: '#6E1E2A',
     name: { es: 'Malbec Reserva · Valle de Uco', en: 'Reserve Malbec · Uco Valley' },
     description: {
