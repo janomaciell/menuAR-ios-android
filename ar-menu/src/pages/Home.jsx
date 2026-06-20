@@ -81,22 +81,41 @@ export default function Home() {
           </div>
 
           {/* Secciones por categoría */}
-          <div className="space-y-14">
+          <div className="space-y-10">
             {visibleCategories.map((cat) => {
               const list = getDishesByCategory(cat.id)
               if (!list.length) return null
               return (
-                <div key={cat.id} id={`cat-${cat.id}`} className="scroll-mt-32">
-                  <div className="mb-5 flex items-end justify-between gap-4">
-                    <div>
-                      <h3 className="font-display text-2xl font-bold text-ink">{tr(cat.name)}</h3>
-                      <p className="mt-1 max-w-xl font-sans text-sm text-stone">{tr(cat.description)}</p>
+                <div key={cat.id} id={`cat-${cat.id}`} className="scroll-mt-32 overflow-hidden rounded-xl2 border border-hairline bg-white shadow-sm">
+                  {/* Cabecera / Portada de la Categoría */}
+                  <div className="relative h-40 w-full overflow-hidden sm:h-48">
+                    <img
+                      src={cat.cover}
+                      alt={tr(cat.name)}
+                      className="h-full w-full object-cover transition-transform duration-700 hover:scale-[1.03]"
+                      loading="lazy"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-ink via-ink/50 to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 p-4 text-porcelain sm:p-5 flex justify-between items-end gap-4">
+                      <div className="min-w-0">
+                        <span className="eyebrow text-ember mb-1 block">
+                          {t('categoryTitle')}
+                        </span>
+                        <h3 className="font-display text-2xl font-bold leading-tight sm:text-3xl text-white">
+                          {tr(cat.name)}
+                        </h3>
+                        <p className="mt-1 max-w-xl font-sans text-xs text-hairline/90 sm:text-sm truncate sm:whitespace-normal">
+                          {tr(cat.description)}
+                        </p>
+                      </div>
+                      <span className="hidden shrink-0 font-sans text-xs font-semibold uppercase tracking-wider text-hairline/80 border border-hairline/20 rounded-full px-3 py-1 sm:block bg-ink/30 backdrop-blur-sm">
+                        {list.length} {t('dishCount')}
+                      </span>
                     </div>
-                    <span className="hidden shrink-0 font-sans text-sm text-stone sm:block">
-                      {list.length} {t('dishCount')}
-                    </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+
+                  {/* Lista de Platos en formato de fila de texto */}
+                  <div className="divide-y divide-hairline bg-white px-4 py-1 sm:px-6">
                     {list.map((dish, i) => (
                       <DishCard
                         key={dish.id}

@@ -1,72 +1,85 @@
 import { motion } from 'framer-motion'
 import { useLanguage } from '../context/LanguageContext'
 import { formatPrice } from '../utils/format'
-import DishImage from './DishImage'
 import { TagPills, SpiceMeter } from './Badges'
 
 export default function DishCard({ dish, onDetails, onAR, index = 0 }) {
   const { t, tr, lang } = useLanguage()
 
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: '-40px' }}
-      transition={{ duration: 0.5, delay: Math.min(index * 0.05, 0.35) }}
-      className="group flex flex-col overflow-hidden rounded-xl2 border border-hairline bg-porcelain shadow-card transition-shadow duration-300 hover:shadow-cardHover"
-    >
-      {/* Imagen + etiquetas */}
-      <button onClick={() => onDetails?.(dish)} className="relative block aspect-[4/3] w-full overflow-hidden" aria-label={tr(dish.name)}>
-        <DishImage
-          dish={dish}
-          className="h-full w-full transition-transform duration-700 group-hover:scale-[1.04]"
-          sizes="(max-width: 768px) 100vw, 380px"
-        />
-        {dish.tags?.length > 0 && (
-          <div className="absolute left-3 top-3">
-            <TagPills tags={dish.tags.slice(0, 2)} />
-          </div>
-        )}
-      </button>
+  const handleRowClick = (e) => {
+    // Evitar abrir detalles si el usuario hizo click en botones de acción específicos
+    if (e.target.closest('.ar-btn') || e.target.closest('.details-btn')) return
+    onDetails?.(dish)
+  }
 
-      {/* Cuerpo */}
-      <div className="flex flex-1 flex-col p-4">
-        <div className="flex items-start justify-between gap-3">
-          <h3 className="font-display text-lg font-bold leading-tight text-ink">{tr(dish.name)}</h3>
-          <span className="shrink-0 font-sans text-base font-semibold text-ember">
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true, margin: '-20px' }}
+      transition={{ duration: 0.4, delay: Math.min(index * 0.03, 0.25) }}
+      onClick={handleRowClick}
+      className="group flex flex-col md:flex-row md:items-center justify-between gap-3 py-4 px-2 border-b border-hairline hover:bg-cream/20 transition-all duration-200 cursor-pointer"
+    >
+      {/* Cuerpo principal con información del plato */}
+      <div className="flex-1 min-w-0">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mb-1.5">
+          <h4 className="font-display text-lg font-bold text-ink group-hover:text-ember transition-colors duration-200">
+            {tr(dish.name)}
+          </h4>
+          <span className="font-sans text-base font-semibold text-ember">
             {formatPrice(dish.price, lang)}
           </span>
+          {dish.tags?.length > 0 && (
+            <div className="flex items-center gap-1">
+              <TagPills tags={dish.tags.slice(0, 2)} />
+            </div>
+          )}
         </div>
 
-        <p className="mt-1.5 line-clamp-2 font-sans text-sm leading-relaxed text-stone">
+        <p className="font-sans text-[0.85rem] text-stone leading-relaxed max-w-3xl line-clamp-2 md:line-clamp-1">
           {tr(dish.description)}
         </p>
 
-        {/* Metadatos */}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="chip">
+        {/* Metadatos rápidos */}
+        <div className="mt-2.5 flex items-center gap-3">
+          <span className="flex items-center gap-1 font-sans text-xs text-stone">
             <ClockIcon />
             {dish.prepTime} {t('card.minutes')}
           </span>
           {dish.spice > 0 && (
-            <span className="chip">
+            <span className="flex items-center gap-1 font-sans text-xs text-stone">
               <SpiceMeter level={dish.spice} />
             </span>
           )}
         </div>
-
-        {/* Acciones */}
-        <div className="mt-4 flex items-center gap-2 pt-1">
-          <button onClick={() => onAR?.(dish)} className="btn-ember flex-1 px-3 py-2.5 text-[0.82rem]">
-            <CubeIcon />
-            {t('card.ar')}
-          </button>
-          <button onClick={() => onDetails?.(dish)} className="btn-ghost px-3 py-2.5 text-[0.82rem]">
-            {t('card.details')}
-          </button>
-        </div>
       </div>
-    </motion.article>
+
+      {/* Botones de acción directos */}
+      <div className="flex items-center gap-2 shrink-0 self-end md:self-center mt-2 md:mt-0">
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onAR?.(dish)
+          }}
+          className="ar-btn btn-ember px-3.5 py-2 text-xs flex items-center gap-1.5"
+          aria-label={t('card.ar')}
+        >
+          <CubeIcon />
+          <span>{t('card.ar')}</span>
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onDetails?.(dish)
+          }}
+          className="details-btn btn-ghost px-3.5 py-2 text-xs flex items-center gap-1"
+          aria-label={t('card.details')}
+        >
+          <span>{t('card.details')}</span>
+        </button>
+      </div>
+    </motion.div>
   )
 }
 

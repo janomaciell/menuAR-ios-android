@@ -1,6 +1,7 @@
 import { useRef, useEffect, Suspense, useState, useCallback } from 'react'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
+import { dishes } from '../../data/menuData'
 
 // =============================================================================
 //  DishModel — carga modelos .glb reales desde /public/modelos3D/
@@ -35,25 +36,33 @@ import * as THREE from 'three'
 // Tamaños aproximados en MB de cada archivo (se usan para el filtro de tier).
 // Mantener actualizado si se agregan/comprimen modelos.
 const MODEL_SIZE_MB = {
-  '/modelos3D/burguer.glb':        0.05,
-  '/modelos3D/BigMac.glb':         2,
-  '/modelos3D/cookie.glb':         2,
-  '/modelos3D/muffin.glb':         4,
-  '/modelos3D/pizza.glb':          4,
-  '/modelos3D/crispykitchen.glb':  6,
-  '/modelos3D/grilled-cheese.glb': 6,
-  '/modelos3D/fries.glb':          8,
-  '/modelos3D/fries1.glb':         8,
-  '/modelos3D/fries2.glb':         8,
-  '/modelos3D/polloentero.glb':    8,
-  '/modelos3D/PepperoniPizza.glb': 8,
-  '/modelos3D/BurgerKFC.glb':     12,
-  '/modelos3D/Cheeseburger.glb':  11,
-  '/modelos3D/Croissant.glb':     11,
-  '/modelos3D/Sandwich.glb':      14,
-  '/modelos3D/noodle.glb':        22,
-  '/modelos3D/spaghetti.glb':     30,
-  '/modelos3D/MasaMadre.glb':     36,
+  '/modelos3D/burguer.glb':           0.05,
+  '/modelos3D/BigMac.glb':            2.0,
+  '/modelos3D/cookie.glb':            2.0,
+  '/modelos3D/pan-flauta.glb':        1.7,
+  '/modelos3D/tablita-sushi.glb':     1.0,
+  '/modelos3D/crassant.glb':          2.9,
+  '/modelos3D/muffin.glb':            3.9,
+  '/modelos3D/pizza.glb':             4.4,
+  '/modelos3D/burguer-completa.glb':  4.2,
+  '/modelos3D/pizza-salame.glb':      5.1,
+  '/modelos3D/grilled-cheese.glb':    6.3,
+  '/modelos3D/hotcake.glb':           6.6,
+  '/modelos3D/crispykitchen.glb':     6.8,
+  '/modelos3D/pan-masamadre.glb':     7.1,
+  '/modelos3D/fries.glb':             8.4,
+  '/modelos3D/fries1.glb':            8.4,
+  '/modelos3D/fries2.glb':            8.4,
+  '/modelos3D/polloentero.glb':       8.5,
+  '/modelos3D/PepperoniPizza.glb':    8.7,
+  '/modelos3D/Cheeseburger.glb':     11.9,
+  '/modelos3D/BurgerKFC.glb':        12.8,
+  '/modelos3D/salchicha-envuelta.glb':12.7,
+  '/modelos3D/Sandwich.glb':         14.4,
+  '/modelos3D/alita-pollo.glb':      14.6,
+  '/modelos3D/carne-cruda-waggui.glb':16.1,
+  '/modelos3D/medialuna.glb':        17.2,
+  '/modelos3D/sushi-ramen.glb':       20.1,
 }
 
 // ---- Detectar si es un path a .glb ------------------------------------------
@@ -97,14 +106,20 @@ function GlbModel({ path, accent, onLoadError }) {
       // Clonar para no mutar el caché de useGLTF
       const cloned = scene.clone(true)
 
+      // Obtener ajustes específicos del plato
+      const dishInfo = dishes?.find((d) => d.model === path)
+      const scaleAdjust = dishInfo?.scaleAdjust ?? 1.0
+      const positionAdjust = dishInfo?.positionAdjust ?? [0, 0, 0]
+      const rotationAdjust = dishInfo?.rotationAdjust ?? [0, 0, 0]
+
       // ── Centrar y escalar automáticamente ──────────────────────────────────
       const box    = new THREE.Box3().setFromObject(cloned)
       const size   = new THREE.Vector3()
       box.getSize(size)
       const maxDim = Math.max(size.x, size.y, size.z)
 
-      // Normalizamos a 1.8 unidades Three.js (la escala AR se aplica en ARScene)
-      const targetSize = 1.8
+      // Normalizamos a 1.8 unidades Three.js (la escala AR se aplica en ARScene) multiplicada por el ajuste
+      const targetSize = 1.8 * scaleAdjust
       const scale      = maxDim > 0 ? targetSize / maxDim : 1
       cloned.scale.setScalar(scale)
 
@@ -112,7 +127,16 @@ function GlbModel({ path, accent, onLoadError }) {
       const center = new THREE.Vector3()
       box.getCenter(center)
       cloned.position.sub(center.multiplyScalar(scale))
-      cloned.position.y += 0.05
+      
+      // Aplicar posición ajustada (base 0.05 + offset Y, más offsets X y Z)
+      cloned.position.y += 0.05 + positionAdjust[1]
+      cloned.position.x += positionAdjust[0]
+      cloned.position.z += positionAdjust[2]
+
+      // Aplicar rotación ajustada
+      cloned.rotation.x += rotationAdjust[0]
+      cloned.rotation.y += rotationAdjust[1]
+      cloned.rotation.z += rotationAdjust[2]
 
       // Habilitar sombras en todos los meshes
       cloned.traverse((node) => {
@@ -132,7 +156,7 @@ function GlbModel({ path, accent, onLoadError }) {
     } catch (err) {
       onLoadError?.('parse_error')
     }
-  }, [scene, onLoadError])
+  }, [scene, path, onLoadError])
 
   return <group ref={groupRef} />
 }
